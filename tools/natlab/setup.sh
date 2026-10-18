@@ -11,7 +11,7 @@ ip netns exec inet ip addr add 203.0.113.100/24 dev br0
 ip netns exec inet ip addr add 203.0.113.101/24 dev br0
 ip netns exec inet ip link set br0 up
 mk() { # router side, wan ip, lan net, host ns, nat kind
-  R=$1; WAN=$2; LAN=$3; H=$4; KIND=$5
+  R=$1; WAN=$2; LAN=$3; H=$4; KIND=$5; PEER=$6
   ip link add ${R}w type veth peer name ${R}wi
   ip link set ${R}w netns $R; ip link set ${R}wi netns inet
   ip netns exec inet ip link set ${R}wi master br0; ip netns exec inet ip link set ${R}wi up
@@ -28,11 +28,18 @@ mk() { # router side, wan ip, lan net, host ns, nat kind
   fi
   if [ "$KIND" = hard ]; then
     ip netns exec $R iptables -t nat -A POSTROUTING -o ${R}w -j MASQUERADE --random-fully
+  elif [ "$KIND" = oneway ]; then
+    # Looks "easy" to STUN (full-cone port for the STUN mapping) but maps traffic towards the
+    # peer to a random port: the peer hears us, we never hear the peer back (seen in the field).
+    ip netns exec $R iptables -t nat -A PREROUTING -i ${R}w -p udp --dport 47810 -j DNAT --to-destination $LAN.2:47810
+    ip netns exec $R iptables -t nat -A POSTROUTING -o ${R}w -d $PEER -j MASQUERADE --random-fully
+    ip netns exec $R iptables -t nat -A POSTROUTING -o ${R}w -j MASQUERADE
+    ip netns exec $R iptables -I FORWARD -i ${R}w -m conntrack --ctstate DNAT -j ACCEPT
   else
     ip netns exec $R iptables -t nat -A POSTROUTING -o ${R}w -j MASQUERADE
   fi
 }
 FW=${3:-fw}
-mk rA 203.0.113.1 10.1.0 hA $1
-mk rB 203.0.113.2 10.2.0 hB $2
+mk rA 203.0.113.1 10.1.0 hA $1 203.0.113.2
+mk rB 203.0.113.2 10.2.0 hB $2 203.0.113.1
 echo "lab ready: A=$1 B=$2"

@@ -23,6 +23,8 @@ use std::time::{Duration, Instant};
 
 /// Extra sockets opened by a side behind a hard NAT.
 pub const HARD_NAT_SOCKETS: usize = 128;
+/// Classic punching gets this long before the hard-NAT techniques are switched on.
+pub const ESCALATE_AFTER: Duration = Duration::from_secs(3);
 /// Random-port probes per spray tick (one tick = 40 ms) towards a hard-NAT peer.
 const PROBES_PER_TICK: usize = 24;
 
@@ -46,10 +48,7 @@ impl PunchPlan {
         if !peer_hard {
             return plan;
         }
-        let public_ip = plan.cands.iter().find_map(|a| match a.ip() {
-            IpAddr::V4(ip) if !ip.is_private() && !ip.is_loopback() && !ip.is_link_local() => Some(ip),
-            _ => None,
-        });
+        let public_ip = public_ips(&plan.cands).into_iter().next();
         if let Some(ip) = public_ip {
             plan.spray_ip = Some(ip);
             // Sequential allocators hand out the next ports after the ones STUN saw.
@@ -65,9 +64,21 @@ impl PunchPlan {
     }
 }
 
-/// Our own extra sockets when we are behind a hard NAT.
+/// Extra sockets bound to ports in 20000-40000: outside Windows' ephemeral range and outside the
+/// UDP ranges DPI-bypass tools such as Zapret intercept (443, 19294-19344, 50000-50100).
 pub fn open_extra_sockets(n: usize) -> Vec<UdpSocket> {
-    (0..n).filter_map(|_| UdpSocket::bind("0.0.0.0:0").ok()).collect()
+    let mut rng = rand::thread_rng();
+    let mut out = Vec::with_capacity(n);
+    let mut tries = 0;
+    while out.len() < n && tries < n * 4 {
+        tries += 1;
+        let port = rng.gen_range(20000..40000u16);
+        if let Ok(s) = UdpSocket::bind(("0.0.0.0", port)) {
+            let _ = s.set_nonblocking(true);
+            out.push(s);
+        }
+    }
+    out
 }
 
 fn random_port(rng: &mut impl Rng, near: &[u16]) -> u16 {
@@ -78,35 +89,60 @@ fn random_port(rng: &mut impl Rng, near: &[u16]) -> u16 {
     rng.gen_range(1024..=65535)
 }
 
-/// Returns (index of the socket that got through, peer address).
+/// Virtual-LAN tools hand out addresses from 25.0.0.0/8 (Hamachi) and 26.0.0.0/8 (Radmin VPN);
+/// they are not reachable over the internet, so never spray at them.
+fn is_overlay_ip(ip: &Ipv4Addr) -> bool {
+    matches!(ip.octets()[0], 25 | 26)
+}
+
+/// Public IPv4 addresses among the peer's candidates.
+fn public_ips(cands: &[SocketAddr]) -> Vec<Ipv4Addr> {
+    let mut v = Vec::new();
+    for a in cands {
+        if let IpAddr::V4(ip) = a.ip() {
+            if !ip.is_private() && !ip.is_loopback() && !ip.is_link_local() && !is_overlay_ip(&ip) && !v.contains(&ip) {
+                v.push(ip);
+            }
+        }
+    }
+    v
+}
+
+/// Run the punching state machine on `socks` (index 0 = the main socket). Returns the index of
+/// the socket that got through and the peer address as seen from it.
+///
+/// * Success needs proof that OUR packets reach the peer (a PUNCH_ACK or tunnel traffic from it),
+///   not just that we hear the peer: one-way paths are common with NATs that map each destination
+///   differently, and declaring success on them leaves the other side stranded.
+/// * If nothing works after `escalate_after`, both techniques for hard NATs are switched on no
+///   matter what the NAT types looked like: extra sockets (new mappings on our NAT) and random
+///   port probes at the peer's public IPs (to find the mappings its NAT made towards us).
 pub fn punch(
-    socks: &[UdpSocket],
+    socks: &mut Vec<UdpSocket>,
     plan: &PunchPlan,
     tx: &TxCipher,
     rx: &mut RxCipher,
     timeout: Duration,
+    escalate_after: Duration,
     cancel: &AtomicBool,
 ) -> Result<(usize, SocketAddr)> {
     if plan.cands.is_empty() && plan.spray_ip.is_none() {
         return Err(Error::NatTraversal("peer has no candidates".into()));
     }
-    for s in socks {
+    for s in socks.iter() {
         s.set_nonblocking(true)?;
     }
-    let restore = |socks: &[UdpSocket]| {
-        for s in socks {
-            let _ = s.set_nonblocking(false);
-        }
-    };
     let mut rng = rand::thread_rng();
     let start = Instant::now();
     let mut last_tick = None::<Instant>;
     let mut tick: u64 = 0;
-    let mut found: Option<(usize, SocketAddr, Instant)> = None;
-    let mut acked = false;
     let mut out = Vec::with_capacity(64);
     let mut buf = vec![0u8; 2048];
     let mut sent_random = 0u64;
+    let mut heard_from: Option<SocketAddr> = None;
+    let mut escalated = false;
+    let mut spray_ips: Vec<Ipv4Addr> = plan.spray_ip.into_iter().collect();
+    let all_public = public_ips(&plan.cands);
 
     let result = loop {
         if cancel.load(Ordering::Relaxed) {
@@ -114,21 +150,31 @@ pub fn punch(
         }
         if start.elapsed() > timeout {
             break Err(Error::NatTraversal(format!(
-                "no reply in {:?} (cands {}, extra sockets {}, random probes {})",
+                "no two-way path in {:?} (heard peer: {}, cands {}, extra sockets {}, random probes {})",
                 timeout,
+                heard_from.map(|a| a.to_string()).unwrap_or_else(|| "no".into()),
                 plan.cands.len(),
                 socks.len().saturating_sub(1),
                 sent_random
             )));
         }
-        if let Some((i, addr, at)) = found {
-            if acked || at.elapsed() > Duration::from_millis(1500) {
-                for _ in 0..3 {
-                    tx.seal(P_PUNCH_ACK, b"", &mut out);
-                    let _ = socks[i].send_to(&out, addr);
-                }
-                break Ok((i, addr));
+        if !escalated && start.elapsed() >= escalate_after {
+            escalated = true;
+            if socks.len() == 1 {
+                socks.extend(open_extra_sockets(HARD_NAT_SOCKETS));
             }
+            for ip in &all_public {
+                if !spray_ips.contains(ip) {
+                    spray_ips.push(*ip);
+                }
+            }
+            log::info!(
+                "punch: no two-way path after {:?} (heard peer: {:?}); escalating: {} extra sockets, spraying {:?}",
+                escalate_after,
+                heard_from,
+                socks.len() - 1,
+                spray_ips
+            );
         }
 
         // ---- send
@@ -136,14 +182,13 @@ pub fn punch(
             last_tick = Some(Instant::now());
             tick += 1;
             let early = start.elapsed() < Duration::from_secs(3);
-            // main socket: candidates every tick early on, then every third tick
             if early || tick % 3 == 0 {
                 for c in plan.cands.iter().chain(plan.predicted.iter()) {
                     tx.seal(P_PUNCH, &(tick as u32).to_le_bytes(), &mut out);
                     let _ = socks[0].send_to(&out, c);
                 }
             }
-            // extra sockets (hard NAT on our side): each one every 5th tick (200 ms)
+            // extra sockets: each one every 5th tick (200 ms), aimed at the peer's candidates
             for (k, s) in socks.iter().enumerate().skip(1) {
                 if (k as u64 + tick) % 5 == 0 {
                     for c in &plan.cands {
@@ -152,12 +197,12 @@ pub fn punch(
                     }
                 }
             }
-            // hard NAT on the peer's side: random ports on its public IP
-            if let Some(ip) = plan.spray_ip {
-                for _ in 0..PROBES_PER_TICK {
+            for ip in &spray_ips {
+                let per_ip = (PROBES_PER_TICK / spray_ips.len().max(1)).max(8);
+                for _ in 0..per_ip {
                     let port = random_port(&mut rng, &plan.peer_ports);
                     tx.seal(P_PUNCH, &(tick as u32).to_le_bytes(), &mut out);
-                    let _ = socks[0].send_to(&out, SocketAddr::new(IpAddr::V4(ip), port));
+                    let _ = socks[0].send_to(&out, SocketAddr::new(IpAddr::V4(*ip), port));
                     sent_random += 1;
                 }
             }
@@ -165,7 +210,8 @@ pub fn punch(
 
         // ---- receive (all sockets, non-blocking)
         let mut got_any = false;
-        for (i, s) in socks.iter().enumerate() {
+        let mut done: Option<(usize, SocketAddr)> = None;
+        'socks: for (i, s) in socks.iter().enumerate() {
             loop {
                 match s.recv_from(&mut buf) {
                     Ok((n, from)) => {
@@ -173,33 +219,24 @@ pub fn punch(
                         let Some((ptype, _)) = rx.open(&mut buf[..n]) else { continue };
                         match ptype {
                             P_PUNCH => {
+                                // The peer reaches us here; tell it so (its proof of a working path).
                                 tx.seal(P_PUNCH_ACK, b"", &mut out);
                                 let _ = s.send_to(&out, from);
-                                if found.is_none() {
-                                    found = Some((i, from, Instant::now()));
+                                if heard_from.is_none() {
+                                    log::info!("punch: hearing the peer from {from} on socket {i} after {:?}", start.elapsed());
                                 }
+                                heard_from.get_or_insert(from);
                             }
-                            P_PUNCH_ACK => {
-                                acked = true;
-                                if found.is_none() {
-                                    found = Some((i, from, Instant::now()));
-                                }
-                            }
-                            // Peer already moved on to tunnel traffic: the path works.
+                            // ACK, or tunnel traffic from a peer that already finished: our packets
+                            // reach it from this socket, and its packets reach us. Two-way path.
                             _ => {
-                                if found.is_none() || found.map(|f| f.0) == Some(i) {
-                                    found = Some((i, from, Instant::now()));
-                                    acked = true;
-                                }
+                                done = Some((i, from));
+                                break 'socks;
                             }
                         }
                     }
-                    Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::ConnectionReset | ErrorKind::Interrupted) => {
-                        if e.kind() == ErrorKind::ConnectionReset {
-                            continue; // Windows: ICMP unreachable from an earlier probe
-                        }
-                        break;
-                    }
+                    Err(e) if e.kind() == ErrorKind::ConnectionReset => continue, // Windows ICMP noise
+                    Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted) => break,
                     Err(e) => {
                         log::debug!("punch recv on socket {i}: {e}");
                         break;
@@ -207,11 +244,21 @@ pub fn punch(
                 }
             }
         }
+        if let Some((i, addr)) = done {
+            // A few ACKs so a peer that is still punching finishes right away.
+            for _ in 0..3 {
+                tx.seal(P_PUNCH_ACK, b"", &mut out);
+                let _ = socks[i].send_to(&out, addr);
+            }
+            break Ok((i, addr));
+        }
         if !got_any {
             std::thread::sleep(Duration::from_millis(2));
         }
     };
-    restore(socks);
+    for s in socks.iter() {
+        let _ = s.set_nonblocking(false);
+    }
     result
 }
 

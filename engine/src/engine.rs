@@ -464,14 +464,16 @@ impl Engine {
         let stop = Arc::new(AtomicBool::new(false));
         *self.session.lock().unwrap() = Some(SessionCtl { stop: stop.clone() });
         let result = self.client_session(&conn, &events, &stop, cancel, host_ip, &peer_dev);
+        // Always close the tunnel (a no-op if it already closed): a session that ends on our
+        // own timeout would otherwise keep the virtual adapter's packet session open, and the
+        // next connection could not start one ("already initialized").
         let reason = match &result {
             Ok(()) => "stream ended",
-            Err(Some(e)) if e.code == "lost" || e.code == "peer_closed" => "",
+            Err(Some(e)) if e.code == "peer_closed" => "peer closed",
+            Err(Some(e)) if e.code == "lost" => "lost",
             Err(_) => "error",
         };
-        if !reason.is_empty() {
-            conn.close(reason);
-        }
+        conn.close(reason);
         result
     }
 

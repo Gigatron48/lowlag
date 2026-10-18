@@ -11,7 +11,7 @@ use crate::crypto::{b64, code_keys, open_signal, seal_signal, session_keys, unb6
 use crate::netinfo::{bind_socket, gather, parse_cands, GatherOpts, Gathered};
 use crate::crypto::RxCipher as Rx;
 use crate::proto::SignalMsg;
-use crate::punch::{open_extra_sockets, punch, PunchPlan, HARD_NAT_SOCKETS};
+use crate::punch::{open_extra_sockets, punch, PunchPlan, ESCALATE_AFTER, HARD_NAT_SOCKETS};
 use crate::signal::{SignalEvent, SignalTransport};
 use crate::tun::TunDevice;
 use crate::{random_hex, unix_now, Error, Result, PROTO_VERSION, TUN_NET_PREFIX};
@@ -24,8 +24,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-const PUNCH_TIMEOUT: Duration = Duration::from_secs(15);
-const HARD_PUNCH_TIMEOUT: Duration = Duration::from_secs(22);
+const PUNCH_TIMEOUT: Duration = Duration::from_secs(25);
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Generous: a PC clock a few minutes off must not silently drop requests.
 const MAX_OFFER_AGE_S: i64 = 600;
@@ -104,6 +103,7 @@ fn publish_msg(signal: &dyn SignalTransport, topic: &str, key: &[u8; 32], msg: &
 }
 
 /// Punch with the right technique for both NAT types; returns the socket that got through.
+#[allow(clippy::too_many_arguments)]
 fn run_punch(
     main: UdpSocket,
     me: &Gathered,
@@ -116,18 +116,11 @@ fn run_punch(
 ) -> Result<(UdpSocket, SocketAddr)> {
     let plan = PunchPlan::new(parse_cands(peer_cands), peer_nat, peer_ports);
     let mut socks = vec![main];
-    if me.nat_kind() != "easy" {
-        for _ in 0..HARD_NAT_SOCKETS {
-            match bind_socket(0) {
-                Ok(s) => socks.push(s),
-                Err(_) => break,
-            }
-        }
-        if socks.len() == 1 {
-            socks.extend(open_extra_sockets(HARD_NAT_SOCKETS));
-        }
+    // Known-hard NAT on our side: open the extra sockets right away instead of after the
+    // classic phase.
+    if me.nat_kind() == "hard" {
+        socks.extend(open_extra_sockets(HARD_NAT_SOCKETS));
     }
-    let hard_mode = socks.len() > 1 || plan.spray_ip.is_some();
     log::info!(
         "punch: me nat={} | peer nat={:?} ports={:?} cands={:?} | extra sockets {} spray {:?}",
         me.nat_kind(),
@@ -137,10 +130,14 @@ fn run_punch(
         socks.len() - 1,
         plan.spray_ip
     );
-    let timeout = if hard_mode { HARD_PUNCH_TIMEOUT } else { PUNCH_TIMEOUT };
-    let (i, addr) = punch(&socks, &plan, tx, rx, timeout, cancel)?;
-    log::info!("punch: success on socket {i} ({}) to {addr}", if i == 0 { "main" } else { "extra" });
-    Ok((socks.swap_remove(i), addr))
+    let (i, addr) = punch(&mut socks, &plan, tx, rx, PUNCH_TIMEOUT, ESCALATE_AFTER, cancel)?;
+    log::info!("punch: two-way path on socket {i} ({}) to {addr}", if i == 0 { "main" } else { "extra" });
+    let sock = socks.swap_remove(i);
+    // Extra sockets are bound with default buffers; video needs big ones.
+    let r = socket2::SockRef::from(&sock);
+    let _ = r.set_recv_buffer_size(4 << 20);
+    let _ = r.set_send_buffer_size(4 << 20);
+    Ok((sock, addr))
 }
 
 // ============================================================================ host

@@ -541,6 +541,15 @@ impl Platform for WinPlatform {
         s.push_str(&format!("sunshine installed {} creds {}\n", self.sunshine_exe().exists(), self.creds.lock().unwrap().is_some()));
         s.push_str(&format!("moonlight present {}\n", self.moonlight_dir().join("Moonlight.exe").exists()));
         s.push_str(&format!("local ipv4 {:?}\n", llcore::netinfo::local_ipv4s()));
+        s.push_str(&format!("global ipv6 {:?}\n", llcore::netinfo::global_ipv6s()));
+        let exe = self.exe_dir.join("lowlag.exe");
+        if let Ok((_, out)) = run_hidden("netsh", &["advfirewall", "firewall", "show", "rule", "name=LowLag", "verbose"], None) {
+            let has_rule = out.to_lowercase().contains(&exe.display().to_string().to_lowercase());
+            s.push_str(&format!("firewall rule for {}: {}\n", exe.display(), if has_rule { "present" } else { "MISSING" }));
+        }
+        if let Ok((_, out)) = run_hidden("netsh", &["advfirewall", "show", "currentprofile", "state"], None) {
+            s.push_str(&format!("firewall profile: {}\n", out.split_whitespace().collect::<Vec<_>>().join(" ")));
+        }
         if let Ok((_, out)) = run_hidden("sc", &["query", SUNSHINE_SERVICE], None) {
             s.push_str(&format!("service: {}\n", out.split_whitespace().collect::<Vec<_>>().join(" ")));
         }
@@ -558,7 +567,8 @@ impl Platform for WinPlatform {
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "(Get-Process winws -ErrorAction SilentlyContinue | Select-Object -First 1).Path",
+                // UTF-8 output: Zapret often lives in a folder with a Cyrillic name ("Загрузки").
+                "[Console]::OutputEncoding = [Text.Encoding]::UTF8; (Get-Process winws -ErrorAction SilentlyContinue | Select-Object -First 1).Path",
             ],
             None,
         )

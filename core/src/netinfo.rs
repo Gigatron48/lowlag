@@ -107,6 +107,23 @@ pub fn local_ipv4s() -> Vec<Ipv4Addr> {
     out
 }
 
+/// Global IPv6 addresses of this machine (for diagnostics: with IPv6 on both ends no NAT is
+/// involved at all).
+pub fn global_ipv6s() -> Vec<std::net::Ipv6Addr> {
+    let mut out = Vec::new();
+    if let Ok(ifs) = if_addrs::get_if_addrs() {
+        for i in ifs {
+            if let IpAddr::V6(ip) = i.ip() {
+                // 2000::/3 = global unicast
+                if (ip.segments()[0] & 0xe000) == 0x2000 && !out.contains(&ip) {
+                    out.push(ip);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The local address used for the default route (no packets are sent).
 pub fn default_route_ip() -> Option<Ipv4Addr> {
     let s = UdpSocket::bind("0.0.0.0:0").ok()?;
