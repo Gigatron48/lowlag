@@ -32,6 +32,12 @@ pub enum SignalMsg {
         cands: Vec<String>,
         /// topic where the host should publish its answer
         reply: String,
+        /// "hard" if our NAT maps every destination to a new port (symmetric)
+        #[serde(default)]
+        nat: String,
+        /// public ports seen by STUN
+        #[serde(default)]
+        ports: Vec<u16>,
     },
     /// Host -> client: "your request reached me" (sent before the user decides).
     #[serde(rename = "ack")]
@@ -58,6 +64,10 @@ pub enum SignalMsg {
         /// first three octets of the tunnel subnet, e.g. [10, 213, 77]
         #[serde(default)]
         net: Vec<u8>,
+        #[serde(default)]
+        nat: String,
+        #[serde(default)]
+        ports: Vec<u16>,
     },
 }
 
@@ -111,6 +121,8 @@ mod tests {
             epk: String::new(),
             cands: vec![],
             net: vec![],
+            nat: String::new(),
+            ports: vec![],
         };
         let s = serde_json::to_string(&m).unwrap();
         assert!(s.contains("\"t\":\"answer\""));

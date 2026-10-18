@@ -5,10 +5,12 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_SERVERS: &[&str] = &[
-    "stun.cloudflare.com:3478",
     "stun.l.google.com:19302",
-    "stun1.l.google.com:19302",
     "stun.sipnet.ru:3478",
+    "stun.cloudflare.com:3478",
+    "stun1.l.google.com:19302",
+    "stun2.l.google.com:19302",
+    "stun.voipgate.com:3478",
 ];
 
 const MAGIC: u32 = 0x2112_A442;

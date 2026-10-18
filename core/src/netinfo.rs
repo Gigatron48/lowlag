@@ -33,18 +33,37 @@ pub struct Gathered {
     pub cands: Vec<SocketAddr>,
     /// Public address as seen by STUN.
     pub public: Option<SocketAddr>,
-    /// Different STUN servers saw different ports: "hard" NAT, punching likely fails.
+    /// Different STUN servers saw different ports: "hard" NAT (a new public port per
+    /// destination). Needs the many-sockets technique in `punch`.
     pub symmetric: bool,
     pub upnp: Option<SocketAddr>,
+    /// Every public port STUN servers saw for this socket (helps the peer guess ours).
+    pub ports: Vec<u16>,
+    /// How many STUN servers answered.
+    pub stun_answers: usize,
 }
 
 impl Gathered {
+    /// "hard": a new public port per destination; "easy": one public port per socket (seen
+    /// consistently by 2+ STUN servers); "unknown": not enough answers to tell.
+    pub fn nat_kind(&self) -> &'static str {
+        if self.symmetric {
+            "hard"
+        } else if self.stun_answers >= 2 {
+            "easy"
+        } else {
+            "unknown"
+        }
+    }
+
     pub fn describe(&self) -> String {
         format!(
-            "public={} upnp={} symmetric_nat={} cands={}",
+            "nat={} public={} upnp={} ports={:?} stun_answers={} cands={}",
+            self.nat_kind(),
             self.public.map(|a| a.to_string()).unwrap_or("-".into()),
             self.upnp.map(|a| a.to_string()).unwrap_or("-".into()),
-            self.symmetric,
+            self.ports,
+            self.stun_answers,
             self.cands.len()
         )
     }
@@ -140,8 +159,11 @@ pub fn gather(sock: &UdpSocket, opts: &GatherOpts) -> Gathered {
 
     let servers = stun::resolve(&opts.stun_servers);
     let answers = stun::query(sock, &servers, Duration::from_millis(1800));
-    let mut g = Gathered::default();
+    let mut g = Gathered { stun_answers: answers.len(), ..Default::default() };
     for (_, mapped) in &answers {
+        if !g.ports.contains(&mapped.port()) {
+            g.ports.push(mapped.port());
+        }
         match g.public {
             None => g.public = Some(*mapped),
             Some(p) if p != *mapped => g.symmetric = true,

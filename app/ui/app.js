@@ -32,7 +32,7 @@ const STRINGS = {
     step_preparing: "Определяем адрес в сети",
     step_contacting: "Отправляем запрос другу",
     step_waiting: "Друг получил запрос. Ждём, пока он нажмёт «Разрешить»",
-    step_punching: "Устанавливаем прямое соединение",
+    step_punching: "Устанавливаем прямое соединение (до 20 секунд)",
     step_testing: "Проверяем скорость канала",
     step_pairing: "Сопрягаем компьютеры. Когда появится окно «Pairing completed», нажмите OK (только в первый раз)",
     step_starting: "Запускаем поток",
@@ -55,7 +55,7 @@ const STRINGS = {
     err_timeout: "Запрос не дошёл до друга. Проверьте код и что у друга открыт LowLag и под кодом горит зелёная точка. Если точка красная, пусть он откроет Настройки и нажмёт «Проверить».",
     err_no_decision: "Друг получил запрос, но не ответил на него.",
     err_offline: "Нет связи ни с одним сервером знакомства. Откройте Настройки и нажмите «Проверить» в разделе «Проверка сети».",
-    err_nat: "Не получилось соединиться напрямую: роутер или провайдер блокирует входящие подключения. Включите UPnP в роутере у одного из вас или попробуйте другую сеть.",
+    err_nat: "Не получилось соединиться напрямую. Так бывает, когда оба подключены через провайдерский NAT (например, оба с мобильного интернета). Попробуйте, чтобы хотя бы один из вас подключился с домашнего интернета. В следующих версиях для таких случаев появятся серверы-посредники.",
     err_pair: "Не удалось сопрячь компьютеры. Попробуйте подключиться ещё раз.",
     err_host_not_ready: "На компьютере друга не запущен модуль трансляции. Пусть он перезапустит LowLag.",
     err_stream: "Поток не запустился.",
@@ -67,10 +67,10 @@ const STRINGS = {
     netcheck: "Проверка сети", netcheck_run: "Проверить", netcheck_running: "Проверяем…",
     netcheck_note: "Покажет, какие серверы доступны с этого компьютера.",
     grp_server: "Серверы знакомства", grp_stun: "Определение адреса (STUN)", grp_router: "Роутер", grp_zapret: "Zapret",
-    nc_unreachable: "недоступен",
+    nc_unreachable: "недоступен", nc_reachable: "доступен",
     nc_all_down: "Нет доступа ни к одному серверу знакомства, поэтому подключиться не получится. Проверьте интернет, VPN и Zapret.",
-    nc_some_down: "Часть серверов недоступна, но для подключения хватит одного рабочего, если он доступен и у друга.",
-    nc_all_ok: "Все серверы доступны.",
+    nc_some_down: "Часть серверов недоступна, но для подключения хватит одного рабочего, если он доступен и у друга. Эти серверы нужны только чтобы найти друг друга: игра идёт напрямую, мимо них.",
+    nc_all_ok: "Все серверы доступны. Они нужны только чтобы найти друг друга: игра идёт напрямую, мимо них.",
     nc_zapret: "Zapret включён в режиме, который затрагивает всё подряд (IPSet: any или Game Filter). Если подключение не проходит, в service.bat поставьте Game Filter: disabled и IPSet Filter: none, затем перезапустите Zapret.",
     nc_stun_down: "Не удалось определить внешний адрес: прямое соединение может не получиться.",
   },
@@ -103,7 +103,7 @@ const STRINGS = {
     step_preparing: "Finding our network address",
     step_contacting: "Sending the request to your friend",
     step_waiting: "Your friend got the request. Waiting for them to press Allow",
-    step_punching: "Opening a direct connection",
+    step_punching: "Opening a direct connection (up to 20 seconds)",
     step_testing: "Measuring connection speed",
     step_pairing: "Pairing the computers. When the “Pairing completed” window appears, press OK (first time only)",
     step_starting: "Starting the stream",
@@ -126,7 +126,7 @@ const STRINGS = {
     err_timeout: "The request didn't reach your friend. Check the code and that LowLag is open on their PC with a green dot under the code. If the dot is red, ask them to open Settings and press Check.",
     err_no_decision: "Your friend got the request but didn't answer it.",
     err_offline: "None of the matchmaking servers can be reached. Open Settings and press Check under Network check.",
-    err_nat: "A direct connection wasn't possible: a router or ISP blocks incoming connections. Turn on UPnP on one of your routers or try another network.",
+    err_nat: "A direct connection wasn't possible. This happens when both of you are behind a carrier-grade NAT (for example, both on mobile internet). Have at least one of you connect from a home network. Relay servers for such cases are coming in a later version.",
     err_pair: "Pairing failed. Try connecting again.",
     err_host_not_ready: "The streaming module isn't running on your friend's PC. Ask them to restart LowLag.",
     err_stream: "The stream didn't start.",
@@ -138,7 +138,7 @@ const STRINGS = {
     netcheck: "Network check", netcheck_run: "Check", netcheck_running: "Checking…",
     netcheck_note: "Shows which servers this computer can reach.",
     grp_server: "Matchmaking servers", grp_stun: "Address discovery (STUN)", grp_router: "Router", grp_zapret: "Zapret",
-    nc_unreachable: "unreachable",
+    nc_unreachable: "unreachable", nc_reachable: "reachable",
     nc_all_down: "No matchmaking server is reachable, so connecting won't work. Check your internet, VPN and Zapret.",
     nc_some_down: "Some servers are unreachable, but one working server is enough if your friend can reach it too.",
     nc_all_ok: "All servers are reachable.",
@@ -394,7 +394,8 @@ $("btn-netcheck").addEventListener("click", async () => {
     const name = document.createElement("span");
     name.textContent = it.name;
     const info = document.createElement("small");
-    info.textContent = it.ok ? (it.ms ? `${it.ms} ${t("ms")}` : "") : t("nc_unreachable");
+    // Server response times are a one-off cost while connecting, not game latency: don't show them.
+    info.textContent = it.ok ? t("nc_reachable") : t("nc_unreachable");
     if (it.group === "zapret") info.textContent = it.ok ? "" : "IPSet/Game Filter";
     li.title = it.detail || "";
     li.append(dot, name, info);
@@ -447,6 +448,7 @@ function mock(cmd, args) {
       s.rtt_ms = 22.4; s.rx_bytes = 4.1e8; s.tx_bytes = 2e6;
     }
     if (scene === "incoming") s.incoming = { name: "MAXIM-GAMING" };
+    if (scene === "waiting") Object.assign(s, { phase: "connecting", role: "client", stage: "waiting", done_stages: ["preparing", "contacting"], target_code: "715203998" });
     if (scene === "error") s.error = { code: "nat" };
     if (scene === "host") Object.assign(s, { phase: "live", role: "host", stage: "streaming", peer: "MAXIM-GAMING", rtt_ms: 23, rtt_history: Array.from({ length: 40 }, (_, i) => 22 + Math.cos(i / 3) * 3) });
   }

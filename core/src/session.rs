@@ -9,8 +9,9 @@ use crate::code;
 use crate::conn::{Conn, ConnEvent, ConnParams};
 use crate::crypto::{b64, code_keys, open_signal, seal_signal, session_keys, unb64_32, CodeKeys, KeyPair, RxCipher, TxCipher};
 use crate::netinfo::{bind_socket, gather, parse_cands, GatherOpts, Gathered};
+use crate::crypto::RxCipher as Rx;
 use crate::proto::SignalMsg;
-use crate::punch::punch;
+use crate::punch::{open_extra_sockets, punch, PunchPlan, HARD_NAT_SOCKETS};
 use crate::signal::{SignalEvent, SignalTransport};
 use crate::tun::TunDevice;
 use crate::{random_hex, unix_now, Error, Result, PROTO_VERSION, TUN_NET_PREFIX};
@@ -24,6 +25,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const PUNCH_TIMEOUT: Duration = Duration::from_secs(15);
+const HARD_PUNCH_TIMEOUT: Duration = Duration::from_secs(22);
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Generous: a PC clock a few minutes off must not silently drop requests.
 const MAX_OFFER_AGE_S: i64 = 600;
@@ -101,7 +103,54 @@ fn publish_msg(signal: &dyn SignalTransport, topic: &str, key: &[u8; 32], msg: &
     signal.publish(topic, &seal_signal(key, &body))
 }
 
+/// Punch with the right technique for both NAT types; returns the socket that got through.
+fn run_punch(
+    main: UdpSocket,
+    me: &Gathered,
+    peer_cands: &[String],
+    peer_nat: &str,
+    peer_ports: &[u16],
+    tx: &TxCipher,
+    rx: &mut Rx,
+    cancel: &AtomicBool,
+) -> Result<(UdpSocket, SocketAddr)> {
+    let plan = PunchPlan::new(parse_cands(peer_cands), peer_nat, peer_ports);
+    let mut socks = vec![main];
+    if me.nat_kind() != "easy" {
+        for _ in 0..HARD_NAT_SOCKETS {
+            match bind_socket(0) {
+                Ok(s) => socks.push(s),
+                Err(_) => break,
+            }
+        }
+        if socks.len() == 1 {
+            socks.extend(open_extra_sockets(HARD_NAT_SOCKETS));
+        }
+    }
+    let hard_mode = socks.len() > 1 || plan.spray_ip.is_some();
+    log::info!(
+        "punch: me nat={} | peer nat={:?} ports={:?} cands={:?} | extra sockets {} spray {:?}",
+        me.nat_kind(),
+        peer_nat,
+        peer_ports,
+        plan.cands,
+        socks.len() - 1,
+        plan.spray_ip
+    );
+    let timeout = if hard_mode { HARD_PUNCH_TIMEOUT } else { PUNCH_TIMEOUT };
+    let (i, addr) = punch(&socks, &plan, tx, rx, timeout, cancel)?;
+    log::info!("punch: success on socket {i} ({}) to {addr}", if i == 0 { "main" } else { "extra" });
+    Ok((socks.swap_remove(i), addr))
+}
+
 // ============================================================================ host
+
+/// What the peer told us about its addresses and NAT.
+struct PeerNat {
+    cands: Vec<String>,
+    nat: String,
+    ports: Vec<u16>,
+}
 
 #[derive(Debug, Clone)]
 pub struct IncomingRequest {
@@ -217,7 +266,7 @@ fn on_offer(
     seen: &mut VecDeque<String>,
 ) {
     let Some(plain) = open_signal(&keys.key, m) else { return };
-    let Ok(SignalMsg::Offer { ver, sid, ts, name, dev, spk, epk, cands, reply }) = serde_json::from_slice(&plain)
+    let Ok(SignalMsg::Offer { ver, sid, ts, name, dev, spk, epk, cands, reply, nat, ports }) = serde_json::from_slice(&plain)
     else {
         return;
     };
@@ -241,6 +290,8 @@ fn on_offer(
             epk: String::new(),
             cands: vec![],
             net: vec![],
+            nat: String::new(),
+            ports: vec![],
         };
         if let Err(e) = publish_msg(signal.as_ref(), &reply, &keys.key, &ans) {
             log::warn!("failed to send decline: {e}");
@@ -265,7 +316,8 @@ fn on_offer(
         if let Err(e) = publish_msg(signal.as_ref(), &reply, &keys.key, &ack) {
             log::warn!("could not acknowledge request: {e}");
         }
-        let result = host_session(&req, &id, &keys, signal.as_ref(), &opts, handler.as_ref(), &epk, &cands, &reply);
+        let peer = PeerNat { cands, nat, ports };
+        let result = host_session(&req, &id, &keys, signal.as_ref(), &opts, handler.as_ref(), &epk, &peer, &reply);
         match result {
             Ok(Some(est)) => handler.on_established(est),
             Ok(None) => busy.store(false, Ordering::SeqCst), // declined
@@ -287,10 +339,11 @@ fn host_session(
     opts: &GatherOpts,
     handler: &dyn HostHandler,
     peer_eph: &[u8; 32],
-    peer_cands: &[String],
+    peer: &PeerNat,
     reply: &str,
 ) -> Result<Option<Established>> {
-    let answer = |ok: bool, reason: &str, cands: Vec<String>, epk: String, net: Vec<u8>| {
+    let mut my_nat = (String::new(), Vec::new());
+    let answer = |ok: bool, reason: &str, cands: Vec<String>, epk: String, net: Vec<u8>, nat: &(String, Vec<u16>)| {
         let msg = SignalMsg::Answer {
             ver: PROTO_VERSION,
             sid: req.sid.clone(),
@@ -303,19 +356,21 @@ fn host_session(
             epk,
             cands,
             net,
+            nat: nat.0.clone(),
+            ports: nat.1.clone(),
         };
         publish_msg(signal, reply, &keys.key, &msg)
     };
 
     if let Decision::Decline(reason) = handler.decide(req) {
-        let _ = answer(false, &reason, vec![], String::new(), vec![]);
+        let _ = answer(false, &reason, vec![], String::new(), vec![], &my_nat);
         return Ok(None);
     }
     handler.on_progress(req, "gathering");
     let sock = match bind_socket(opts.preferred_port) {
         Ok(s) => s,
         Err(e) => {
-            let _ = answer(false, "internal", vec![], String::new(), vec![]);
+            let _ = answer(false, "internal", vec![], String::new(), vec![], &my_nat);
             return Err(e.into());
         }
     };
@@ -323,23 +378,24 @@ fn host_session(
     log::info!("host candidates: {} ({:?})", g.describe(), g.cands);
     let eph = KeyPair::generate();
     let Some(sk) = session_keys(true, &id.key, &eph, &req.static_pub, peer_eph, &keys.key, &req.sid) else {
-        let _ = answer(false, "crypto", vec![], String::new(), vec![]);
+        let _ = answer(false, "crypto", vec![], String::new(), vec![], &my_nat);
         return Err(Error::Crypto);
     };
     let net = host_net(&id.dev);
-    answer(true, "", g.cands.iter().map(|a| a.to_string()).collect(), b64(&eph.public()), net.to_vec())?;
+    my_nat = (g.nat_kind().to_string(), g.ports.clone());
+    answer(true, "", g.cands.iter().map(|a| a.to_string()).collect(), b64(&eph.public()), net.to_vec(), &my_nat)?;
 
     handler.on_progress(req, "punching");
     let tx = TxCipher::new(&sk.tx, &sk.hp_tx);
     let mut rx = RxCipher::new(&sk.rx, &sk.hp_rx);
     let never = AtomicBool::new(false);
-    let peer = punch(&sock, &parse_cands(peer_cands), &tx, &mut rx, PUNCH_TIMEOUT, &never)?;
-    log::info!("host: path to '{}' established via {peer}", req.name);
+    let (sock, peer_addr) = run_punch(sock, &g, &peer.cands, &peer.nat, &peer.ports, &tx, &mut rx, &never)?;
+    log::info!("host: path to '{}' established via {peer_addr}", req.name);
     Ok(Some(Established {
         role: Role::Host,
         sid: req.sid.clone(),
         sock,
-        peer_addr: peer,
+        peer_addr,
         tx,
         rx,
         peer_name: req.name.clone(),
@@ -440,6 +496,8 @@ pub fn connect(
         epk: b64(&eph.public()),
         cands: g.cands.iter().map(|a| a.to_string()).collect(),
         reply: reply.clone(),
+        nat: g.nat_kind().to_string(),
+        ports: g.ports.clone(),
     };
     publish_msg(signal.as_ref(), &keys.topic, &keys.key, &offer)?;
 
@@ -482,7 +540,7 @@ pub fn connect(
             _ => {}
         }
     };
-    let SignalMsg::Answer { ok, reason, name, dev, spk, epk, cands, net, .. } = answer else { unreachable!() };
+    let SignalMsg::Answer { ok, reason, name, dev, spk, epk, cands, net, nat, ports, .. } = answer else { unreachable!() };
     if !ok {
         return Err(Error::Declined(if reason.is_empty() { "declined".into() } else { reason }));
     }
@@ -498,7 +556,7 @@ pub fn connect(
     progress(ClientStage::Punching);
     let tx = TxCipher::new(&sk.tx, &sk.hp_tx);
     let mut rx = RxCipher::new(&sk.rx, &sk.hp_rx);
-    let peer = punch(&sock, &parse_cands(&cands), &tx, &mut rx, PUNCH_TIMEOUT, cancel)?;
+    let (sock, peer) = run_punch(sock, &g, &cands, &nat, &ports, &tx, &mut rx, cancel)?;
     log::info!("client: path to '{name}' established via {peer}");
     Ok(Established {
         role: Role::Client,

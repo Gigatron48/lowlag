@@ -141,7 +141,8 @@ impl WinPlatform {
     }
 
     /// Make sure our recommended keys are present in sunshine.conf (never overrides user choices).
-    fn ensure_sunshine_conf(&self) {
+    /// Returns true if the file was changed (Sunshine must be restarted to pick it up).
+    fn ensure_sunshine_conf(&self) -> bool {
         let path = self.sunshine_dir().join("config").join("sunshine.conf");
         let text = std::fs::read_to_string(&path).unwrap_or_default();
         let has = |key: &str| {
@@ -156,8 +157,14 @@ impl WinPlatform {
         if !has("qsv_preset") {
             add.push_str("qsv_preset = veryfast\n");
         }
+        // Without a choice Sunshine pops up "Choose a Gamepad Driver" on every start. ViGEmBus is
+        // the free option (Xbox 360 / DualShock 4 emulation); the paid Virtual HID Broker is not
+        // something our users should be asked about.
+        if !has("gamepad_driver") {
+            add.push_str("gamepad_driver = vigembus\n");
+        }
         if add.is_empty() {
-            return;
+            return false;
         }
         let mut new = text.clone();
         if !new.is_empty() && !new.ends_with('\n') {
@@ -168,8 +175,14 @@ impl WinPlatform {
             let _ = std::fs::create_dir_all(d);
         }
         match std::fs::write(&path, new) {
-            Ok(()) => log::info!("sunshine.conf: added {}", add.trim().replace('\n', ", ")),
-            Err(e) => log::warn!("cannot update sunshine.conf: {e}"),
+            Ok(()) => {
+                log::info!("sunshine.conf: added {}", add.trim().replace('\n', ", "));
+                true
+            }
+            Err(e) => {
+                log::warn!("cannot update sunshine.conf: {e}");
+                false
+            }
         }
     }
 
@@ -375,7 +388,7 @@ impl Platform for WinPlatform {
             let mut rng = rand::thread_rng();
             let pass: String = (0..24).map(|_| ALPHA[rng.gen_range(0..ALPHA.len())] as char).collect();
             let creds = Creds { user: SUNSHINE_USER.into(), pass };
-            self.ensure_sunshine_conf();
+            let _ = self.ensure_sunshine_conf();
             let _ = run_hidden("sc", &["stop", SUNSHINE_SERVICE], None);
             std::thread::sleep(Duration::from_secs(2));
             let (code, out) =
@@ -386,6 +399,11 @@ impl Platform for WinPlatform {
             self.save_creds(&creds).map_err(|e| format!("save credentials: {e}"))?;
             *self.creds.lock().unwrap() = Some(creds);
             log::info!("Sunshine credentials configured");
+        }
+        if self.ensure_sunshine_conf() {
+            // existing install: apply the new settings
+            let _ = run_hidden("sc", &["stop", SUNSHINE_SERVICE], None);
+            std::thread::sleep(Duration::from_secs(2));
         }
         let _ = run_hidden("sc", &["config", SUNSHINE_SERVICE, "start=", "auto"], None);
         let _ = run_hidden("sc", &["start", SUNSHINE_SERVICE], None);
