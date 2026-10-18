@@ -4,7 +4,7 @@
 //! * `code`    – human-friendly 9-digit connection codes;
 //! * `crypto`  – key derivation, signaling encryption and the per-packet AEAD with header protection;
 //! * `stun`    – a tiny STUN client used to learn our public address;
-//! * `signal`  – the rendezvous transport (ntfy-compatible HTTP pub/sub) used only to exchange offers;
+//! * `signal`  – rendezvous transports (ntfy HTTP pub/sub, MQTT, several at once) used only to exchange offers;
 //! * `proto`   – signaling and in-tunnel control messages;
 //! * `netinfo` – candidate gathering (LAN addresses, STUN, UPnP);
 //! * `punch`   – UDP hole punching;
@@ -17,6 +17,7 @@
 pub mod code;
 pub mod conn;
 pub mod crypto;
+pub mod mqtt;
 pub mod netinfo;
 pub mod proto;
 pub mod punch;

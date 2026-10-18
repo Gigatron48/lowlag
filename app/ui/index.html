@@ -148,6 +148,16 @@
         </select>
       </div>
 
+      <div class="field">
+        <div class="check-head">
+          <span class="check-title" data-i18n="netcheck">Проверка сети</span>
+          <button class="ghost-btn" id="btn-netcheck" data-i18n="netcheck_run">Проверить</button>
+        </div>
+        <p class="field-note" id="netcheck-note" data-i18n="netcheck_note">Покажет, какие серверы доступны с этого компьютера.</p>
+        <ul class="checks" id="netcheck-list" hidden></ul>
+        <p class="field-note" id="netcheck-summary" hidden></p>
+      </div>
+
       <div class="field links">
         <button class="ghost-btn" id="btn-report" data-i18n="save_report">Сохранить отчёт в «Загрузки»</button>
         <button class="ghost-btn" id="btn-forget" data-i18n="forget_devices">Забыть разрешённые устройства</button>

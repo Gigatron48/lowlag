@@ -5,10 +5,10 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_SERVERS: &[&str] = &[
-    "stun.l.google.com:19302",
     "stun.cloudflare.com:3478",
+    "stun.l.google.com:19302",
     "stun1.l.google.com:19302",
-    "stun.nextcloud.com:443",
+    "stun.sipnet.ru:3478",
 ];
 
 const MAGIC: u32 = 0x2112_A442;
@@ -54,19 +54,39 @@ pub fn parse_response(buf: &[u8], txid: &[u8; 12]) -> Option<SocketAddr> {
     fallback
 }
 
-/// Resolve server names to IPv4 socket addresses (skips names that fail to resolve).
-pub fn resolve(servers: &[String]) -> Vec<SocketAddr> {
-    let mut out = Vec::new();
-    for s in servers {
-        if let Ok(addrs) = s.to_socket_addrs() {
-            if let Some(a) = addrs.into_iter().find(|a| a.is_ipv4()) {
-                if !out.contains(&a) {
-                    out.push(a);
-                }
-            }
+/// Resolve server names to IPv4 socket addresses, all in parallel, giving up on slow DNS after
+/// `timeout` (names that fail or are late are skipped).
+pub fn resolve_within(servers: &[String], timeout: Duration) -> Vec<(String, SocketAddr)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    for (i, s) in servers.iter().enumerate() {
+        let (tx, s) = (tx.clone(), s.clone());
+        std::thread::spawn(move || {
+            let a = s.to_socket_addrs().ok().and_then(|mut it| it.find(|a| a.is_ipv4()));
+            let _ = tx.send((i, s, a));
+        });
+    }
+    drop(tx);
+    let deadline = Instant::now() + timeout;
+    let mut got = Vec::new();
+    while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+        match rx.recv_timeout(left) {
+            Ok((i, name, Some(a))) => got.push((i, name, a)),
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    got.sort_by_key(|g| g.0);
+    let mut out: Vec<(String, SocketAddr)> = Vec::new();
+    for (_, name, a) in got {
+        if !out.iter().any(|(_, b)| *b == a) {
+            out.push((name, a));
         }
     }
     out
+}
+
+pub fn resolve(servers: &[String]) -> Vec<SocketAddr> {
+    resolve_within(servers, Duration::from_millis(1500)).into_iter().map(|(_, a)| a).collect()
 }
 
 /// Ask every server (in parallel) what our mapped address is. Uses `sock` itself, so the result

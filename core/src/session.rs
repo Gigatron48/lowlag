@@ -25,7 +25,10 @@ use std::time::{Duration, Instant};
 
 const PUNCH_TIMEOUT: Duration = Duration::from_secs(15);
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
-const MAX_OFFER_AGE_S: i64 = 120;
+/// Generous: a PC clock a few minutes off must not silently drop requests.
+const MAX_OFFER_AGE_S: i64 = 600;
+/// How long the client waits for the host to confirm it received the request.
+const ACK_TIMEOUT: Duration = Duration::from_secs(25);
 
 pub struct Identity {
     /// Random stable device id (hex).
@@ -257,6 +260,11 @@ fn on_offer(
     let (id, keys, signal, opts, handler, busy) =
         (id.clone(), keys.clone(), signal.clone(), opts.clone(), handler.clone(), busy.clone());
     thread::spawn(move || {
+        // Tell the client right away that the request arrived (before the user decides).
+        let ack = SignalMsg::Ack { sid: req.sid.clone() };
+        if let Err(e) = publish_msg(signal.as_ref(), &reply, &keys.key, &ack) {
+            log::warn!("could not acknowledge request: {e}");
+        }
         let result = host_session(&req, &id, &keys, signal.as_ref(), &opts, handler.as_ref(), &epk, &cands, &reply);
         match result {
             Ok(Some(est)) => handler.on_established(est),
@@ -411,8 +419,15 @@ pub fn connect(
         }
     };
 
-    let deadline = Instant::now() + Duration::from_secs(15);
-    while wait_event(deadline)? != SignalEvent::Open {}
+    let deadline = Instant::now() + Duration::from_secs(25);
+    loop {
+        match wait_event(deadline) {
+            Ok(SignalEvent::Open) => break,
+            Ok(_) => continue,
+            Err(Error::Timeout(_)) => return Err(Error::Signal("no rendezvous server reachable".into())),
+            Err(e) => return Err(e),
+        }
+    }
 
     progress(ClientStage::Contacting);
     let offer = SignalMsg::Offer {
@@ -427,22 +442,44 @@ pub fn connect(
         reply: reply.clone(),
     };
     publish_msg(signal.as_ref(), &keys.topic, &keys.key, &offer)?;
-    progress(ClientStage::WaitingApproval);
 
-    let deadline = Instant::now() + APPROVAL_TIMEOUT;
+    // First the host confirms it got the request (so we can tell "not delivered" from "not yet
+    // approved"), then it answers once the user decides.
+    let started = Instant::now();
+    let mut acked = false;
+    let mut republished = false;
     let answer = loop {
-        let ev = wait_event(deadline).map_err(|e| match e {
-            Error::Timeout(_) => Error::Timeout("no answer from that code"),
-            other => other,
-        })?;
+        let limit = if acked { APPROVAL_TIMEOUT } else { ACK_TIMEOUT };
+        if started.elapsed() > limit {
+            return Err(Error::Timeout(if acked { "friend did not answer" } else { "no answer from that code" }));
+        }
+        if !acked && !republished && started.elapsed() > Duration::from_secs(8) {
+            republished = true;
+            let _ = publish_msg(signal.as_ref(), &keys.topic, &keys.key, &offer);
+        }
+        let ev = match wait_event(Instant::now() + Duration::from_millis(500)) {
+            Ok(ev) => ev,
+            Err(Error::Timeout(_)) => continue,
+            Err(e) => return Err(e),
+        };
         let SignalEvent::Message(m) = ev else { continue };
         let Some(plain) = open_signal(&keys.key, &m) else { continue };
-        if let Ok(a @ SignalMsg::Answer { .. }) = serde_json::from_slice::<SignalMsg>(&plain) {
-            if let SignalMsg::Answer { sid: ref s, .. } = a {
-                if *s == sid {
-                    break a;
+        match serde_json::from_slice::<SignalMsg>(&plain) {
+            Ok(SignalMsg::Ack { sid: s }) if s == sid => {
+                if !acked {
+                    acked = true;
+                    log::info!("host received the request after {:?}", started.elapsed());
+                    progress(ClientStage::WaitingApproval);
                 }
             }
+            Ok(a @ SignalMsg::Answer { .. }) => {
+                if let SignalMsg::Answer { sid: ref s, .. } = a {
+                    if *s == sid {
+                        break a;
+                    }
+                }
+            }
+            _ => {}
         }
     };
     let SignalMsg::Answer { ok, reason, name, dev, spk, epk, cands, net, .. } = answer else { unreachable!() };

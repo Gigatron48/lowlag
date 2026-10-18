@@ -70,9 +70,28 @@ pub struct Config {
     pub trusted: Vec<TrustedDevice>,
     /// host device ids this machine's Moonlight is paired with
     pub paired_hosts: Vec<String>,
-    pub signal_server: String,
+    /// Rendezvous servers used in parallel (ntfy https:// and mqtt:// URLs).
+    pub signal_servers: Vec<String>,
     pub stun_servers: Vec<String>,
     pub preferred_port: u16,
+    /// Bumped when defaults change in a way that should replace old saved values.
+    /// (Missing in old files => 0, not the struct default.)
+    #[serde(default = "zero")]
+    pub config_version: u32,
+}
+
+fn zero() -> u32 {
+    0
+}
+
+const CONFIG_VERSION: u32 = 2;
+
+fn default_signal_servers() -> Vec<String> {
+    llcore::signal::DEFAULT_SERVERS.iter().map(|s| s.to_string()).collect()
+}
+
+fn default_stun_servers() -> Vec<String> {
+    llcore::stun::DEFAULT_SERVERS.iter().map(|s| s.to_string()).collect()
 }
 
 impl Default for Config {
@@ -84,9 +103,10 @@ impl Default for Config {
             settings: Settings::default(),
             trusted: Vec::new(),
             paired_hosts: Vec::new(),
-            signal_server: llcore::signal::DEFAULT_SERVER.into(),
-            stun_servers: llcore::stun::DEFAULT_SERVERS.iter().map(|s| s.to_string()).collect(),
+            signal_servers: default_signal_servers(),
+            stun_servers: default_stun_servers(),
             preferred_port: 47810,
+            config_version: CONFIG_VERSION,
         }
     }
 }
@@ -111,8 +131,12 @@ impl Config {
             cfg.key = b64(&KeyPair::generate().to_bytes());
             dirty = true;
         }
-        if cfg.signal_server.is_empty() {
-            cfg.signal_server = llcore::signal::DEFAULT_SERVER.into();
+        if cfg.config_version < CONFIG_VERSION || cfg.signal_servers.is_empty() || cfg.stun_servers.is_empty() {
+            // v1 used a single rendezvous server and a STUN server on UDP 443 (which DPI-bypass
+            // tools such as Zapret treat as QUIC): move to the current defaults.
+            cfg.signal_servers = default_signal_servers();
+            cfg.stun_servers = default_stun_servers();
+            cfg.config_version = CONFIG_VERSION;
             dirty = true;
         }
         cfg.settings.sanitize();
@@ -162,6 +186,13 @@ mod tests {
         assert_eq!(a.code, b.code);
         assert_eq!(a.key, b.key);
         assert_eq!(a.identity("x").key.public(), b.identity("x").key.public());
+        assert!(b.signal_servers.len() >= 2);
+        // an old v1 file is migrated to the new server lists but keeps its identity
+        std::fs::write(&p, format!(r#"{{"dev":"{}","code":"{}","key":"{}","signal_server":"https://ntfy.sh","stun_servers":["stun.nextcloud.com:443"]}}"#, a.dev, a.code, a.key)).unwrap();
+        let c = Config::load_or_create(&p);
+        assert_eq!(c.code, a.code);
+        assert_eq!(c.config_version, CONFIG_VERSION);
+        assert!(!c.stun_servers.iter().any(|s| s.contains("nextcloud")));
         let _ = std::fs::remove_dir_all(dir);
     }
 

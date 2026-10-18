@@ -14,6 +14,28 @@ pub struct HostStatus {
     pub detail: String,
 }
 
+/// A running DPI-bypass tool (Zapret, winws.exe) and its risky settings.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ZapretStatus {
+    pub path: String,
+    /// none | loaded | any
+    pub ipset: String,
+    pub game_filter: bool,
+    /// "IPSet any" or Game Filter: Zapret then touches traffic it was not meant for.
+    pub risky: bool,
+}
+
+impl ZapretStatus {
+    pub fn describe(&self) -> String {
+        format!(
+            "running from {}; IPSet Filter: {}; Game Filter: {}",
+            self.path,
+            self.ipset,
+            if self.game_filter { "on" } else { "off" }
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct StreamOpts {
     pub width: u32,
@@ -59,6 +81,11 @@ pub trait Platform: Send + Sync {
     /// Extra lines for support reports.
     fn diagnostics(&self) -> String {
         String::new()
+    }
+
+    /// Detect Zapret (winws.exe) and its settings.
+    fn zapret_status(&self) -> Option<ZapretStatus> {
+        None
     }
 }
 

@@ -30,8 +30,8 @@ const STRINGS = {
     st_host_missing: "Модуль трансляции не запущен, к вам пока нельзя подключиться",
     st_busy: "Идёт сеанс",
     step_preparing: "Определяем адрес в сети",
-    step_contacting: "Ищем компьютер друга",
-    step_waiting: "Ждём, пока друг разрешит подключение",
+    step_contacting: "Отправляем запрос другу",
+    step_waiting: "Друг получил запрос. Ждём, пока он нажмёт «Разрешить»",
     step_punching: "Устанавливаем прямое соединение",
     step_testing: "Проверяем скорость канала",
     step_pairing: "Сопрягаем компьютеры. Когда появится окно «Pairing completed», нажмите OK (только в первый раз)",
@@ -52,8 +52,9 @@ const STRINGS = {
     err_declined: "Друг отклонил подключение.",
     err_busy: "К этому компьютеру уже кто-то подключён.",
     err_version: "У друга другая версия LowLag. Обновите программу у обоих.",
-    err_timeout: "Компьютер с этим кодом не ответил. Проверьте код и что LowLag открыт у друга.",
-    err_offline: "Нет связи с сервером знакомства. Проверьте интернет.",
+    err_timeout: "Запрос не дошёл до друга. Проверьте код и что у друга открыт LowLag и под кодом горит зелёная точка. Если точка красная, пусть он откроет Настройки и нажмёт «Проверить».",
+    err_no_decision: "Друг получил запрос, но не ответил на него.",
+    err_offline: "Нет связи ни с одним сервером знакомства. Откройте Настройки и нажмите «Проверить» в разделе «Проверка сети».",
     err_nat: "Не получилось соединиться напрямую: роутер или провайдер блокирует входящие подключения. Включите UPnP в роутере у одного из вас или попробуйте другую сеть.",
     err_pair: "Не удалось сопрячь компьютеры. Попробуйте подключиться ещё раз.",
     err_host_not_ready: "На компьютере друга не запущен модуль трансляции. Пусть он перезапустит LowLag.",
@@ -63,6 +64,15 @@ const STRINGS = {
     err_peer_closed: "Друг завершил сеанс.",
     err_internal: "Внутренняя ошибка.",
     ended: "Сеанс завершён",
+    netcheck: "Проверка сети", netcheck_run: "Проверить", netcheck_running: "Проверяем…",
+    netcheck_note: "Покажет, какие серверы доступны с этого компьютера.",
+    grp_server: "Серверы знакомства", grp_stun: "Определение адреса (STUN)", grp_router: "Роутер", grp_zapret: "Zapret",
+    nc_unreachable: "недоступен",
+    nc_all_down: "Нет доступа ни к одному серверу знакомства, поэтому подключиться не получится. Проверьте интернет, VPN и Zapret.",
+    nc_some_down: "Часть серверов недоступна, но для подключения хватит одного рабочего, если он доступен и у друга.",
+    nc_all_ok: "Все серверы доступны.",
+    nc_zapret: "Zapret включён в режиме, который затрагивает всё подряд (IPSet: any или Game Filter). Если подключение не проходит, в service.bat поставьте Game Filter: disabled и IPSet Filter: none, затем перезапустите Zapret.",
+    nc_stun_down: "Не удалось определить внешний адрес: прямое соединение может не получиться.",
   },
   en: {
     settings: "Settings", your_code: "Your code", copy: "Copy", copied: "Copied",
@@ -91,8 +101,8 @@ const STRINGS = {
     st_host_missing: "The streaming module isn't running, nobody can connect to you yet",
     st_busy: "Session in progress",
     step_preparing: "Finding our network address",
-    step_contacting: "Looking for your friend's computer",
-    step_waiting: "Waiting for your friend to allow the connection",
+    step_contacting: "Sending the request to your friend",
+    step_waiting: "Your friend got the request. Waiting for them to press Allow",
     step_punching: "Opening a direct connection",
     step_testing: "Measuring connection speed",
     step_pairing: "Pairing the computers. When the “Pairing completed” window appears, press OK (first time only)",
@@ -113,8 +123,9 @@ const STRINGS = {
     err_declined: "Your friend declined the connection.",
     err_busy: "Someone is already connected to that computer.",
     err_version: "Your friend has a different LowLag version. Update both.",
-    err_timeout: "No computer answered with that code. Check the code and that LowLag is open on your friend's PC.",
-    err_offline: "Can't reach the matchmaking server. Check your internet.",
+    err_timeout: "The request didn't reach your friend. Check the code and that LowLag is open on their PC with a green dot under the code. If the dot is red, ask them to open Settings and press Check.",
+    err_no_decision: "Your friend got the request but didn't answer it.",
+    err_offline: "None of the matchmaking servers can be reached. Open Settings and press Check under Network check.",
     err_nat: "A direct connection wasn't possible: a router or ISP blocks incoming connections. Turn on UPnP on one of your routers or try another network.",
     err_pair: "Pairing failed. Try connecting again.",
     err_host_not_ready: "The streaming module isn't running on your friend's PC. Ask them to restart LowLag.",
@@ -124,6 +135,15 @@ const STRINGS = {
     err_peer_closed: "Your friend ended the session.",
     err_internal: "Internal error.",
     ended: "Session ended",
+    netcheck: "Network check", netcheck_run: "Check", netcheck_running: "Checking…",
+    netcheck_note: "Shows which servers this computer can reach.",
+    grp_server: "Matchmaking servers", grp_stun: "Address discovery (STUN)", grp_router: "Router", grp_zapret: "Zapret",
+    nc_unreachable: "unreachable",
+    nc_all_down: "No matchmaking server is reachable, so connecting won't work. Check your internet, VPN and Zapret.",
+    nc_some_down: "Some servers are unreachable, but one working server is enough if your friend can reach it too.",
+    nc_all_ok: "All servers are reachable.",
+    nc_zapret: "Zapret is in a mode that touches all traffic (IPSet: any or Game Filter). If connecting fails, set Game Filter: disabled and IPSet Filter: none in service.bat, then restart Zapret.",
+    nc_stun_down: "Couldn't detect the public address: a direct connection may fail.",
   },
 };
 
@@ -347,6 +367,52 @@ $("btn-report").addEventListener("click", async () => {
 });
 $("btn-forget").addEventListener("click", async () => { await call("forget_devices"); $("settings-msg").textContent = t("devices_forgotten"); });
 
+$("btn-netcheck").addEventListener("click", async () => {
+  const btn = $("btn-netcheck");
+  const list = $("netcheck-list");
+  const summary = $("netcheck-summary");
+  btn.disabled = true;
+  btn.textContent = t("netcheck_running");
+  let items = [];
+  try { items = await call("check_network"); } catch (e) { items = []; summary.textContent = String(e); }
+  btn.disabled = false;
+  btn.textContent = t("netcheck_run");
+  list.innerHTML = "";
+  let group = "";
+  for (const it of items) {
+    if (it.group !== group) {
+      group = it.group;
+      const g = document.createElement("li");
+      g.innerHTML = `<span class="group"></span>`;
+      g.firstChild.textContent = t("grp_" + group);
+      g.style.display = "block";
+      list.append(g);
+    }
+    const li = document.createElement("li");
+    const dot = document.createElement("span");
+    dot.className = "dot " + (it.ok ? "good" : it.group === "router" || it.group === "zapret" ? "fair" : "poor");
+    const name = document.createElement("span");
+    name.textContent = it.name;
+    const info = document.createElement("small");
+    info.textContent = it.ok ? (it.ms ? `${it.ms} ${t("ms")}` : "") : t("nc_unreachable");
+    if (it.group === "zapret") info.textContent = it.ok ? "" : "IPSet/Game Filter";
+    li.title = it.detail || "";
+    li.append(dot, name, info);
+    list.append(li);
+  }
+  list.hidden = items.length === 0;
+  const servers = items.filter((i) => i.group === "server");
+  const up = servers.filter((i) => i.ok).length;
+  const notes = [];
+  if (servers.length) notes.push(up === 0 ? t("nc_all_down") : up < servers.length ? t("nc_some_down") : t("nc_all_ok"));
+  const stun = items.filter((i) => i.group === "stun");
+  if (stun.length && !stun.some((i) => i.ok)) notes.push(t("nc_stun_down"));
+  if (items.some((i) => i.group === "zapret" && !i.ok)) notes.push(t("nc_zapret"));
+  summary.textContent = notes.join(" ");
+  summary.hidden = notes.length === 0;
+  $("netcheck-note").hidden = true;
+});
+
 /* no context menu / text selection outside inputs: feels like an app, not a page */
 document.addEventListener("contextmenu", (e) => { if (!e.target.closest("input, .code")) e.preventDefault(); });
 
@@ -391,6 +457,16 @@ function mock(cmd, args) {
     case "respond": s.incoming = null; break;
     case "set_settings": s.settings = args.settings; break;
     case "save_report": return Promise.resolve("C:\\Users\\Ivan\\Downloads\\LowLag-report.txt");
+    case "check_network": return new Promise((r) => setTimeout(() => r([
+      { group: "server", name: "ntfy.sh", ok: false, detail: "timeout", ms: 8000 },
+      { group: "server", name: "broker.emqx.io", ok: true, detail: "", ms: 140 },
+      { group: "server", name: "broker.hivemq.com", ok: true, detail: "", ms: 160 },
+      { group: "server", name: "test.mosquitto.org", ok: true, detail: "", ms: 90 },
+      { group: "stun", name: "stun.cloudflare.com", ok: true, detail: "93.0.0.1", ms: 40 },
+      { group: "stun", name: "stun.l.google.com", ok: true, detail: "93.0.0.1", ms: 55 },
+      { group: "router", name: "UPnP", ok: false, detail: "not available", ms: 2000 },
+      { group: "zapret", name: "Zapret", ok: false, detail: "IPSet any", ms: 0 },
+    ]), 800));
   }
   return Promise.resolve(JSON.parse(JSON.stringify(s)));
 }

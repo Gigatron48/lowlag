@@ -33,6 +33,7 @@ libraries. Each keeps its own license.
    chacha20, x25519-dalek, hkdf, sha2, rand, ureq, native-tls, socket2, if-addrs, igd-next,
    serde, serde_json, base64, log, windows-sys and their dependencies.
 
-6. Rendezvous: connection codes are matched through an ntfy-compatible server
-   (default https://ntfy.sh). Only small end-to-end-encrypted messages are exchanged there;
-   all streaming traffic flows directly between the two computers.
+6. Rendezvous: connection codes are matched through several public servers used in
+   parallel: ntfy (https://ntfy.sh) and the public MQTT brokers broker.emqx.io,
+   broker.hivemq.com and test.mosquitto.org. Only small end-to-end-encrypted messages are
+   exchanged there; all streaming traffic flows directly between the two computers.

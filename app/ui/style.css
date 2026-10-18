@@ -337,6 +337,15 @@ kbd {
 .field-note { clear: both; margin: 8px 0 0; font-size: 13px; color: var(--muted); }
 .field.links { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 
+.check-head { display: flex; align-items: center; justify-content: space-between; }
+.check-title { font-weight: 550; }
+.checks { list-style: none; margin: 10px 0 0; padding: 0; font-size: 13px; }
+.checks li { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; align-items: center; padding: 5px 0; }
+.checks li .dot { width: 7px; height: 7px; }
+.checks li small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.checks .group { display: block; padding: 10px 0 2px; color: var(--muted); font-size: 12px; font-weight: 500; }
+#netcheck-summary { color: var(--ink); }
+
 .segmented {
   clear: both;
   display: grid; grid-template-columns: repeat(4, 1fr);

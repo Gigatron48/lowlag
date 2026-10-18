@@ -3,7 +3,7 @@
 //! On non-Windows hosts this module can still be type-checked with `--features wincheck`
 //! (wintun is replaced by a signature-compatible stub below).
 
-use crate::platform::{HostStatus, Platform, StreamOpts, StreamProcess};
+use crate::platform::{HostStatus, Platform, StreamOpts, StreamProcess, ZapretStatus};
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
 use llcore::tun::TunDevice;
@@ -526,7 +526,44 @@ impl Platform for WinPlatform {
         if let Ok((_, out)) = run_hidden("sc", &["query", SUNSHINE_SERVICE], None) {
             s.push_str(&format!("service: {}\n", out.split_whitespace().collect::<Vec<_>>().join(" ")));
         }
+        match self.zapret_status() {
+            Some(z) => s.push_str(&format!("zapret: {}\n", z.describe())),
+            None => s.push_str("zapret: not running\n"),
+        }
         s
+    }
+
+    fn zapret_status(&self) -> Option<ZapretStatus> {
+        let (_, out) = run_hidden(
+            "powershell",
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "(Get-Process winws -ErrorAction SilentlyContinue | Select-Object -First 1).Path",
+            ],
+            None,
+        )
+        .ok()?;
+        let exe = PathBuf::from(out.trim());
+        if out.trim().is_empty() || !exe.exists() {
+            return None;
+        }
+        // Flowseal's bundle: <root>\bin\winws.exe, <root>\lists, <root>\utils
+        let root = exe.parent()?.parent()?.to_path_buf();
+        let ipset = match std::fs::read_to_string(root.join("lists").join("ipset-all.txt")) {
+            Ok(t) if t.trim().is_empty() => "any",
+            Ok(t) if t.contains("203.0.113.113/32") => "none",
+            Ok(_) => "loaded",
+            Err(_) => "unknown",
+        };
+        let game_filter = root.join("utils").join("game_filter.enabled").exists();
+        Some(ZapretStatus {
+            path: root.display().to_string(),
+            ipset: ipset.into(),
+            game_filter,
+            risky: ipset == "any" || game_filter,
+        })
     }
 }
 

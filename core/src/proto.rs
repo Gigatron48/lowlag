@@ -33,6 +33,9 @@ pub enum SignalMsg {
         /// topic where the host should publish its answer
         reply: String,
     },
+    /// Host -> client: "your request reached me" (sent before the user decides).
+    #[serde(rename = "ack")]
+    Ack { sid: String },
     /// Host -> client.
     #[serde(rename = "answer")]
     Answer {

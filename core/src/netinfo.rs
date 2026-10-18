@@ -115,6 +115,17 @@ fn try_upnp(local_port: u16) -> Option<SocketAddr> {
     Some(SocketAddr::new(ext_ip, ext_port))
 }
 
+/// Is there a UPnP-capable router? Returns a description, without creating any mapping.
+pub fn upnp_probe() -> Option<String> {
+    let gw = igd_next::search_gateway(igd_next::SearchOptions {
+        timeout: Some(Duration::from_millis(2000)),
+        ..Default::default()
+    })
+    .ok()?;
+    let ext = gw.get_external_ip().map(|i| i.to_string()).unwrap_or_else(|_| "?".into());
+    Some(format!("router {} external {}", gw.addr.ip(), ext))
+}
+
 /// Gather candidates for `sock`. Takes up to ~2.5 s (STUN and UPnP run in parallel).
 pub fn gather(sock: &UdpSocket, opts: &GatherOpts) -> Gathered {
     let port = sock.local_addr().map(|a| a.port()).unwrap_or(0);

@@ -29,7 +29,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: Local MQTT broker for the rendezvous test
+        run: |
+          sudo apt-get install -y -qq mosquitto
+          mosquitto -d -p 18883
       - run: cargo test -p llcore -p llengine
+        env:
+          LL_TEST_MQTT: 127.0.0.1:18883
 
   windows:
     name: Windows installer

@@ -8,7 +8,8 @@ use llcore::crypto::b64;
 use llcore::netinfo::GatherOpts;
 use llcore::proto::Ctrl;
 use llcore::session::{self, ClientStage, Decision, Established, HostHandler, HostListener, IncomingRequest, Identity};
-use llcore::signal::{Ntfy, SignalTransport};
+use llcore::signal::{MultiSignal, SignalTransport};
+use crate::netcheck::{self, CheckItem};
 use llcore::{Error, STREAM_PACKET_SIZE};
 use rand::Rng;
 use serde::Serialize;
@@ -118,6 +119,7 @@ pub struct Engine {
     cancel: Mutex<Arc<AtomicBool>>,
     session: Mutex<Option<SessionCtl>>,
     host_uuid: Mutex<String>,
+    last_check: Mutex<Vec<CheckItem>>,
 }
 
 fn ui_err(code: &str, detail: impl Into<String>) -> UiError {
@@ -130,6 +132,7 @@ fn map_core_err(e: &Error) -> Option<UiError> {
         Error::Declined(r) if r == "busy" => "busy",
         Error::Declined(r) if r == "version" => "version",
         Error::Declined(_) => "declined",
+        Error::Timeout(w) if w.contains("did not answer") => "no_decision",
         Error::Timeout(_) => "timeout",
         Error::Signal(_) => "offline",
         Error::NatTraversal(_) => "nat",
@@ -168,7 +171,7 @@ impl Engine {
         let data = platform.data_dir();
         crate::logger::init(&data.join("logs"));
         let cfg = Config::load_or_create(&data.join("config.json"));
-        let signal: Option<Arc<dyn SignalTransport>> = match Ntfy::new(&cfg.signal_server) {
+        let signal: Option<Arc<dyn SignalTransport>> = match MultiSignal::new(&cfg.signal_servers) {
             Ok(n) => Some(Arc::new(n)),
             Err(e) => {
                 log::error!("rendezvous transport unavailable: {e}");
@@ -230,6 +233,7 @@ impl Engine {
             cancel: Mutex::new(Arc::new(AtomicBool::new(false))),
             session: Mutex::new(None),
             host_uuid: Mutex::new(String::new()),
+            last_check: Mutex::new(Vec::new()),
         });
 
         if let Some(sig) = &engine.signal {
@@ -333,6 +337,17 @@ impl Engine {
         let _ = cfg.save(&self.cfg_path);
     }
 
+    /// Test reachability of every server we depend on (blocks up to ~10 s).
+    pub fn check_network(&self) -> Vec<CheckItem> {
+        let (sig, stun) = {
+            let c = self.cfg.lock().unwrap();
+            (c.signal_servers.clone(), c.stun_servers.clone())
+        };
+        let r = netcheck::run(&self.platform, &sig, &stun);
+        *self.last_check.lock().unwrap() = r.clone();
+        r
+    }
+
     pub fn dismiss_error(&self) {
         self.update(|s| s.error = None);
     }
@@ -347,12 +362,17 @@ impl Engine {
         let mut out = String::new();
         out.push_str(&format!("LowLag {APP_VERSION} report {}\n", crate::logger::timestamp()));
         out.push_str(&format!("device {} name '{}'\n", cfg.dev, st.name));
-        out.push_str(&format!("signal server {} state {}\n", cfg.signal_server, st.signal));
+        out.push_str(&format!("rendezvous {:?} state {}\n", cfg.signal_servers, st.signal));
         out.push_str(&format!("host ready {} {}\n", st.host_ready, st.host_detail));
         out.push_str(&format!("settings {:?}\n", cfg.settings));
         out.push_str(&format!("trusted devices {}, paired hosts {}\n", cfg.trusted.len(), cfg.paired_hosts.len()));
         out.push_str(&format!("display {:?}\n", self.platform.display_mode()));
         out.push_str(&self.platform.diagnostics());
+        let checks = self.last_check.lock().unwrap().clone();
+        if !checks.is_empty() {
+            out.push_str("\n----- network check -----\n");
+            out.push_str(&netcheck::to_text(&checks));
+        }
         out.push_str("\n----- state -----\n");
         out.push_str(&serde_json::to_string_pretty(&st).unwrap_or_default());
         out.push_str("\n----- log -----\n");

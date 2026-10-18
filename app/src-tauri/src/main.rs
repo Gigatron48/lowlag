@@ -49,8 +49,16 @@ fn forget_devices(app: State<App>) -> UiState {
 }
 
 #[tauri::command]
-fn save_report(app: State<App>) -> Result<String, String> {
-    app.0.save_report()
+async fn save_report(app: State<'_, App>) -> Result<String, String> {
+    let e = app.0.clone();
+    tauri::async_runtime::spawn_blocking(move || e.save_report()).await.map_err(|e| e.to_string())?
+}
+
+/// Blocks for several seconds, so it runs off the main thread.
+#[tauri::command]
+async fn check_network(app: State<'_, App>) -> Result<Vec<llengine::netcheck::CheckItem>, String> {
+    let e = app.0.clone();
+    tauri::async_runtime::spawn_blocking(move || e.check_network()).await.map_err(|e| e.to_string())
 }
 
 fn platform() -> Arc<dyn llengine::Platform> {
@@ -85,7 +93,8 @@ fn main() {
             respond,
             set_settings,
             forget_devices,
-            save_report
+            save_report,
+            check_network
         ])
         .build(tauri::generate_context!())
         .expect("failed to start LowLag")
