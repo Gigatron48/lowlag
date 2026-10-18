@@ -6,6 +6,8 @@
   Pop $0
   nsExec::Exec 'netsh advfirewall firewall add rule name="LowLag" dir=in action=allow program="$INSTDIR\lowlag.exe" enable=yes profile=any'
   Pop $0
+  nsExec::Exec 'netsh advfirewall firewall add rule name="LowLag" dir=in action=allow program="$INSTDIR\moonlight\Moonlight.exe" enable=yes profile=any'
+  Pop $0
 
   ; Moonlight keeps its settings next to itself when portable.dat exists.
   FileOpen $1 "$INSTDIR\moonlight\portable.dat" w
