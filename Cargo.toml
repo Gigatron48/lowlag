@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["core", "engine", "app/src-tauri"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+panic = "unwind"
+strip = true

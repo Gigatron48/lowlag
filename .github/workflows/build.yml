@@ -1,0 +1,100 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Bundled components (pinned so every build is reproducible).
+  SUNSHINE_VERSION: v2026.914.233613
+  MOONLIGHT_VERSION: "6.2.0"
+  WINTUN_VERSION: "0.14.1"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Tests (network core + session engine)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p llcore -p llengine
+
+  windows:
+    name: Windows installer
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Download bundled components
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          New-Item -ItemType Directory -Force resources/moonlight | Out-Null
+
+          Invoke-WebRequest "https://github.com/LizardByte/Sunshine/releases/download/$env:SUNSHINE_VERSION/Sunshine-Windows-AMD64-installer.msi" -OutFile resources/sunshine.msi
+
+          Invoke-WebRequest "https://github.com/moonlight-stream/moonlight-qt/releases/download/v$env:MOONLIGHT_VERSION/MoonlightPortable-x64-$env:MOONLIGHT_VERSION.zip" -OutFile moonlight.zip
+          Expand-Archive moonlight.zip -DestinationPath moonlight-unzipped
+          $exe = Get-ChildItem moonlight-unzipped -Recurse -Filter Moonlight.exe | Select-Object -First 1
+          if (-not $exe) { throw "Moonlight.exe not found in the portable zip" }
+          Copy-Item "$($exe.DirectoryName)\*" resources/moonlight -Recurse
+          New-Item -ItemType File -Force resources/moonlight/portable.dat | Out-Null
+
+          Invoke-WebRequest "https://www.wintun.net/builds/wintun-$env:WINTUN_VERSION.zip" -OutFile wintun.zip
+          Expand-Archive wintun.zip -DestinationPath wintun-unzipped
+          Copy-Item wintun-unzipped/wintun/bin/amd64/wintun.dll resources/wintun.dll
+
+          Get-ChildItem resources | Format-Table Name, Length
+
+      - name: Check the Windows module compiles with real Windows APIs
+        run: cargo check -p llengine
+
+      - name: Build installer
+        working-directory: app
+        run: npx --yes @tauri-apps/cli@2 build --ci
+
+      - name: Collect installer
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem target/release/bundle/nsis -Filter *.exe | Select-Object -First 1
+          if (-not $setup) { throw "installer not produced" }
+          Copy-Item $setup.FullName LowLag-Setup.exe
+          "{0:N1} MB" -f ((Get-Item LowLag-Setup.exe).Length / 1MB)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LowLag-Setup
+          path: LowLag-Setup.exe
+          retention-days: 14
+
+      - name: Publish "preview" release (latest main build)
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete preview -y --cleanup-tag 2>$null
+          $notes = "Automatic build of commit $env:GITHUB_SHA"
+          gh release create preview LowLag-Setup.exe --prerelease --target $env:GITHUB_SHA --title "LowLag preview build" --notes $notes
+
+      - name: Publish tagged release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create $env:GITHUB_REF_NAME LowLag-Setup.exe --title "LowLag $env:GITHUB_REF_NAME" --generate-notes

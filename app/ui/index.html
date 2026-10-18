@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LowLag</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <header class="top">
+      <span class="wordmark" aria-label="LowLag">low<span class="wordmark-lag">lag</span></span>
+      <button class="icon-btn" id="btn-settings" data-i18n-title="settings" aria-haspopup="dialog">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      </button>
+    </header>
+
+    <!-- ============ idle ============ -->
+    <main class="view" id="view-idle">
+      <section class="mine">
+        <p class="label" data-i18n="your_code">Ваш код</p>
+        <div class="code-row">
+          <output class="code" id="my-code" aria-live="polite">— — —</output>
+          <button class="icon-btn copy-btn" id="btn-copy" data-i18n-title="copy">
+            <svg viewBox="0 0 24 24" aria-hidden="true" id="copy-icon"><rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 5.5v-.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h.5"/></svg>
+            <svg viewBox="0 0 24 24" aria-hidden="true" id="copied-icon" hidden><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+          </button>
+        </div>
+        <p class="status" id="status"><span class="dot" id="status-dot"></span><span id="status-text"></span></p>
+      </section>
+
+      <form class="join" id="join-form" autocomplete="off">
+        <label class="label" for="peer-code" data-i18n="connect_to_friend">Подключиться к другу</label>
+        <input class="code-input" id="peer-code" inputmode="numeric" maxlength="11" data-i18n-placeholder="friend_code" placeholder="Код друга" spellcheck="false">
+        <button class="primary-btn" id="btn-connect" type="submit" disabled data-i18n="connect">Подключиться</button>
+        <p class="error" id="error" role="alert" hidden></p>
+      </form>
+    </main>
+
+    <!-- ============ connecting (client) ============ -->
+    <main class="view" id="view-connecting" hidden>
+      <p class="label" data-i18n="connecting_to">Подключение</p>
+      <h1 class="peer-title" id="connecting-code"></h1>
+      <ol class="steps" id="steps"></ol>
+      <button class="secondary-btn" id="btn-cancel" data-i18n="cancel">Отменить</button>
+    </main>
+
+    <!-- ============ live session (both roles) ============ -->
+    <main class="view" id="view-live" hidden>
+      <p class="label" id="live-title"></p>
+      <h1 class="peer-title" id="live-peer"></h1>
+
+      <div class="latency">
+        <div class="latency-number"><span id="rtt">—</span><span class="latency-unit" data-i18n="ms">мс</span></div>
+        <p class="latency-caption"><span class="dot" id="rtt-dot"></span><span id="rtt-grade"></span></p>
+        <svg class="trace" id="trace" viewBox="0 0 300 64" preserveAspectRatio="none" aria-hidden="true">
+          <path class="trace-grid" d="M0 63.5H300"/>
+          <path class="trace-line" id="trace-line" d=""/>
+        </svg>
+      </div>
+
+      <dl class="facts">
+        <div><dt data-i18n="route">Канал</dt><dd id="fact-route"></dd></div>
+        <div id="fact-stream-row"><dt data-i18n="stream">Поток</dt><dd id="fact-stream"></dd></div>
+        <div><dt data-i18n="traffic">Трафик</dt><dd id="fact-traffic"></dd></div>
+      </dl>
+
+      <p class="hint" id="live-hint"></p>
+      <button class="secondary-btn danger" id="btn-disconnect" data-i18n="disconnect">Отключиться</button>
+    </main>
+
+    <footer class="foot">
+      <span id="version"></span>
+      <span id="foot-note"></span>
+    </footer>
+  </div>
+
+  <!-- ============ incoming request ============ -->
+  <div class="scrim" id="incoming" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="incoming-title">
+      <h2 id="incoming-title"></h2>
+      <p class="sheet-text" data-i18n="incoming_text">Он увидит ваш экран и сможет управлять мышью, клавиатурой и геймпадом.</p>
+      <label class="check"><input type="checkbox" id="incoming-remember"><span data-i18n="remember_device">Разрешать этому устройству без вопроса</span></label>
+      <div class="sheet-actions">
+        <button class="secondary-btn" id="btn-decline" data-i18n="decline">Отклонить</button>
+        <button class="primary-btn" id="btn-accept" data-i18n="allow">Разрешить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ settings ============ -->
+  <div class="scrim" id="settings" hidden>
+    <div class="sheet tall" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="sheet-head">
+        <h2 id="settings-title" data-i18n="settings">Настройки</h2>
+        <button class="ghost-btn" id="btn-settings-close" data-i18n="done">Готово</button>
+      </div>
+
+      <fieldset class="field">
+        <legend data-i18n="quality">Качество</legend>
+        <div class="segmented" id="set-quality">
+          <button type="button" data-v="auto" data-i18n="q_auto">Авто</button>
+          <button type="button" data-v="max" data-i18n="q_max">Максимум</button>
+          <button type="button" data-v="balanced" data-i18n="q_balanced">Баланс</button>
+          <button type="button" data-v="saver" data-i18n="q_saver">Экономно</button>
+        </div>
+        <p class="field-note" id="quality-note"></p>
+      </fieldset>
+
+      <div class="field row">
+        <label for="set-resolution" data-i18n="resolution">Разрешение</label>
+        <select id="set-resolution">
+          <option value="native" data-i18n="res_native">Как у этого экрана</option>
+          <option value="720">1280 × 720</option>
+          <option value="1080">1920 × 1080</option>
+          <option value="1440">2560 × 1440</option>
+          <option value="2160">3840 × 2160</option>
+        </select>
+      </div>
+
+      <div class="field row">
+        <label for="set-fps" data-i18n="fps">Кадров в секунду</label>
+        <select id="set-fps">
+          <option value="0" data-i18n="fps_native">Как у монитора</option>
+          <option value="60">60</option>
+          <option value="90">90</option>
+          <option value="120">120</option>
+          <option value="144">144</option>
+        </select>
+      </div>
+
+      <label class="field toggle">
+        <span><span data-i18n="vsync">Вертикальная синхронизация</span><small data-i18n="vsync_note">Убирает разрывы картинки, но добавляет до одного кадра задержки</small></span>
+        <input type="checkbox" id="set-vsync" role="switch">
+      </label>
+
+      <label class="field toggle">
+        <span><span data-i18n="overlay">Статистика поверх игры</span><small data-i18n="overlay_note">Задержка декодирования, потери и кадры в углу окна</small></span>
+        <input type="checkbox" id="set-overlay" role="switch">
+      </label>
+
+      <div class="field row">
+        <label for="set-lang" data-i18n="language">Язык</label>
+        <select id="set-lang">
+          <option value="auto" data-i18n="lang_auto">Как в системе</option>
+          <option value="ru">Русский</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+
+      <div class="field links">
+        <button class="ghost-btn" id="btn-report" data-i18n="save_report">Сохранить отчёт в «Загрузки»</button>
+        <button class="ghost-btn" id="btn-forget" data-i18n="forget_devices">Забыть разрешённые устройства</button>
+        <p class="field-note" id="settings-msg" aria-live="polite"></p>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

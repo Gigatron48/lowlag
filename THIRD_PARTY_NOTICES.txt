@@ -1,0 +1,38 @@
+LowLag — third-party components
+================================
+
+LowLag itself (the LowLag application, its network core and user interface) is proprietary
+software. It ships together with, or installs, the following independent programs and
+libraries. Each keeps its own license.
+
+1. Sunshine — game streaming host
+   License: GNU General Public License v3.0
+   Version: v2026.914.233613 (installed as a separate program in "Program Files\Sunshine")
+   Source:  https://github.com/LizardByte/Sunshine/tree/v2026.914.233613
+
+2. Moonlight (moonlight-qt) — game streaming client
+   License: GNU General Public License v3.0
+   Version: 6.2.0, unmodified official portable build (folder "moonlight")
+   Source:  https://github.com/moonlight-stream/moonlight-qt/tree/v6.2.0
+   Moonlight includes Qt (LGPL v3), FFmpeg (LGPL/GPL), SDL2 (zlib), Opus (BSD) and other
+   libraries; their notices are distributed by the Moonlight project.
+
+   LowLag starts Sunshine and Moonlight as separate programs and talks to them only through
+   their command line and HTTP interfaces. For three years from the date you received this
+   copy we will provide, on request and at no charge beyond the cost of distribution, the
+   complete corresponding source code of the GPL components exactly as distributed.
+
+3. Wintun — virtual network adapter driver (wintun.dll)
+   Copyright (C) WireGuard LLC. Distributed under the "Prebuilt Binaries License".
+   https://www.wintun.net
+
+4. Fonts "Onest" and "Unbounded" — SIL Open Font License 1.1
+   (license texts in the application's ui/fonts folder)
+
+5. Rust libraries (MIT and/or Apache-2.0): tauri, wintun (Rust bindings), chacha20poly1305,
+   chacha20, x25519-dalek, hkdf, sha2, rand, ureq, native-tls, socket2, if-addrs, igd-next,
+   serde, serde_json, base64, log, windows-sys and their dependencies.
+
+6. Rendezvous: connection codes are matched through an ntfy-compatible server
+   (default https://ntfy.sh). Only small end-to-end-encrypted messages are exchanged there;
+   all streaming traffic flows directly between the two computers.

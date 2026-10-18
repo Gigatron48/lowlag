@@ -1,0 +1,5 @@
+/target/
+/resources/
+node_modules/
+*.json.tmp
+app/src-tauri/gen/

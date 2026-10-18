@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LowLag",
+  "mainBinaryName": "lowlag",
+  "version": "0.1.0",
+  "identifier": "app.lowlag.desktop",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "LowLag",
+        "width": 400,
+        "height": 660,
+        "minWidth": 380,
+        "minHeight": 600,
+        "resizable": true,
+        "maximizable": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "LowLag",
+    "category": "Utility",
+    "shortDescription": "Low-latency remote play",
+    "longDescription": "Control and play on a friend's PC over the internet with minimal latency.",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "resources": {
+      "../../resources/moonlight": "moonlight",
+      "../../resources/wintun.dll": "wintun.dll",
+      "../../resources/sunshine.msi": "sunshine.msi",
+      "../../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt"
+    },
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "nsis": {
+        "installMode": "perMachine",
+        "installerHooks": "./windows/hooks.nsh",
+        "languages": ["Russian", "English"],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  }
+}
